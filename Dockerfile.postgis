@@ -1,0 +1,28 @@
+ARG PG_MAJOR=16
+ARG POSTGRES_IMAGE=postgres:16-bookworm
+ARG VCHORD_IMAGE=ghcr.io/tensorchord/vchord-postgres:pg16-v1.1.1
+
+FROM ${VCHORD_IMAGE} AS vchord_ext
+
+FROM ${POSTGRES_IMAGE}
+
+ARG PG_MAJOR
+
+# Shared production PostgreSQL image for host workloads.
+# Base responsibilities:
+# - keep PostgreSQL 16 on a bookworm/glibc baseline compatible with vchord
+# - add PostGIS, pg_cron, and pgvector from PGDG
+# - add vchord by copying PG16-matched artifacts from the official TensorChord image
+RUN set -eux; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends \
+    postgresql-${PG_MAJOR}-postgis-3 \
+    postgresql-${PG_MAJOR}-postgis-3-scripts \
+    postgresql-${PG_MAJOR}-cron \
+    postgresql-client-${PG_MAJOR} \
+    postgresql-${PG_MAJOR}-pgvector; \
+  rm -rf /var/lib/apt/lists/*
+
+COPY --from=vchord_ext /usr/lib/postgresql/${PG_MAJOR}/lib/vchord.so /usr/lib/postgresql/${PG_MAJOR}/lib/vchord.so
+COPY --from=vchord_ext /usr/share/postgresql/${PG_MAJOR}/extension/vchord.control /usr/share/postgresql/${PG_MAJOR}/extension/vchord.control
+COPY --from=vchord_ext /usr/share/postgresql/${PG_MAJOR}/extension/vchord--*.sql /usr/share/postgresql/${PG_MAJOR}/extension/

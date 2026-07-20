@@ -1,0 +1,88 @@
+services:
+  postgis:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgis
+      args:
+        PG_MAJOR: "16"
+        POSTGRES_IMAGE: "postgres:16-bookworm"
+        VCHORD_IMAGE: "ghcr.io/tensorchord/vchord-postgres:pg16-v1.1.1"
+    image: postgis-local:16-bookworm-postgis3-cron-vchord1.1.1
+    container_name: postgis
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=vchord,pg_cron
+      - -c
+      - cron.database_name=postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - /opt/stacks/data/postgres/data:/var/lib/postgresql/data
+      - /opt/stacks/data/backups:/backups
+      - /srv/qubit/backups:/srv/qubit/backups
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+      - postgis
+      - backend
+      - hetzner_net
+
+  tailscale-postgis:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-postgis
+    depends_on:
+      - postgis
+    network_mode: "host"
+    env_file:
+      - ./postgis-tailscale.env
+    environment:
+      TS_HOSTNAME: postgis-tail
+      TS_LOGIN_SERVER: https://hs-control.qubitsecured.online
+      TS_DERP_DISABLED: "false"
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./tailscale-postgis-state:/var/lib/tailscale
+    restart: unless-stopped
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -euo pipefail
+        mkdir -p /var/run/tailscale
+        tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock --port=41643 &
+        TS_PID=$$!
+        export TAILSCALED_SOCK=/var/run/tailscale/tailscaled.sock
+        for i in $$(seq 1 40); do
+          if tailscale --socket=$${TAILSCALED_SOCK} version >/dev/null 2>&1; then
+            break
+          fi
+          sleep 0.5
+        done
+        tailscale --socket=$${TAILSCALED_SOCK} up \
+          --authkey=$${TS_AUTHKEY} \
+          --hostname=$${TS_HOSTNAME} \
+          --login-server=$${TS_LOGIN_SERVER} \
+          --accept-dns=false \
+          --accept-routes=false
+        tailscale --socket=$${TAILSCALED_SOCK} serve --bg --yes --tcp=5432 tcp://127.0.0.1:5432
+        wait $${TS_PID}
+
+networks:
+  postgis:
+    external: true
+  backend:
+    external: true
+  hetzner_net:
+    external: true

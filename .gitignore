@@ -1,0 +1,9 @@
+.env
+postgis-tailscale.env
+postgres/
+backups/
+tailscale-postgis-state/
+*.dump
+*.sql
+*.sql.gz
+*.log
