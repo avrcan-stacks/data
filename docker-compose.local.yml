@@ -1,0 +1,19 @@
+# Local Docker Desktop override: PostGIS only (no Tailscale, no external nets).
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+
+services:
+  postgis:
+    networks: !override
+      - default
+    volumes: !override
+      - /opt/stacks/data/postgres/data:/var/lib/postgresql/data
+      - /opt/stacks/data/backups:/backups
+
+  # Keep definition out of local runs (no Tailscale on Desktop).
+  tailscale-postgis: !reset null
+
+networks:
+  postgis: !reset null
+  backend: !reset null
+  hetzner_net: !reset null

@@ -1,9 +1,19 @@
+# Secrets
 .env
 postgis-tailscale.env
+
+# Runtime volumes / state (never commit)
 postgres/
 backups/
 tailscale-postgis-state/
+
+# Dump / SQL / log artifacts
 *.dump
 *.sql
 *.sql.gz
 *.log
+
+# OS / editor noise
+.DS_Store
+*~
+*.swp
