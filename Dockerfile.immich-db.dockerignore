@@ -1,0 +1,4 @@
+# Only this Dockerfile enters the build context. No data, backups or secrets.
+**
+!Dockerfile.immich-db
+!Dockerfile.immich-db.dockerignore

@@ -1,0 +1,91 @@
+# Cutover REHEARSAL stack (isolated). Mirrors the production topology with test containers only:
+#   pgsrc    = stand-in for the production `postgis` container (same image ID, PG 16.13 + PostGIS, restored from the phase-4 full dump)
+#   immichdb = stand-in for `immich-db` (PG 16.16 image, scram, /backups mount) - profile `target`, started by the rehearsal step s_prepare_target
+#   server   = the patched Immich v3.3.5 image with env_file (special-character DB_PASSWORD), label traefik.enable=true, api + microservices workers
+# Only network: testnet (internal: true). No ports, no Docker socket, no production path or secret.
+services:
+  pgsrc:
+    image: ${R_SRC_IMAGE:?}
+    pull_policy: never
+    container_name: immich-apptest-${CASE_ID:?}-pgsrc
+    restart: "no"
+    environment: {POSTGRES_USER: postgres, POSTGRES_PASSWORD: "${R_SU_PW:?}", POSTGRES_DB: postgres, POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.utf8"}
+    command: [postgres, -c, shared_preload_libraries=vchord, -c, shared_buffers=256MB, -c, max_connections=60, -c, "TimeZone=Europe/Zagreb"]
+    volumes:
+      - {type: bind, source: "${TEST_ROOT:?}/src-data", target: /var/lib/postgresql/data, bind: {create_host_path: false}}
+      - {type: bind, source: "${R_FULL_DUMP:?}", target: /full.dump, read_only: true, bind: {create_host_path: false}}
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"], interval: 5s, timeout: 5s, retries: 30, start_period: 15s}
+    mem_limit: 4g
+    cpus: 2
+    shm_size: 1g
+    networks: [testnet]
+  immichdb:
+    image: ${R_NEW_IMAGE:?}
+    pull_policy: never
+    profiles: ["target"]
+    container_name: immich-apptest-${CASE_ID}-immichdb
+    restart: "no"
+    environment: {POSTGRES_USER: postgres, POSTGRES_PASSWORD: "${R_SU_PW}", POSTGRES_DB: postgres, POSTGRES_HOST_AUTH_METHOD: scram-sha-256, POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.utf8"}
+    command: [postgres, -c, shared_preload_libraries=vchord, -c, shared_buffers=256MB, -c, max_connections=60, -c, "TimeZone=Europe/Zagreb"]
+    volumes:
+      - {type: bind, source: "${TEST_ROOT}/new-data", target: /var/lib/postgresql/data, bind: {create_host_path: false}}
+      - {type: bind, source: "${R_EVROOT:?}", target: /backups, bind: {create_host_path: false}}
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"], interval: 5s, timeout: 5s, retries: 30, start_period: 15s}
+    mem_limit: 4g
+    cpus: 2
+    shm_size: 1g
+    networks: [testnet]
+  redis:
+    image: ${TEST_REDIS_IMAGE:?}
+    pull_policy: never
+    container_name: immich-apptest-${CASE_ID}-redis
+    restart: "no"
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    tmpfs: ["/data"]
+    healthcheck: {test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"], interval: 5s, timeout: 3s, retries: 10}
+    networks: [testnet]
+  ml:
+    image: ${TEST_ML_IMAGE:?}
+    pull_policy: never
+    container_name: immich-apptest-${CASE_ID}-ml
+    restart: "no"
+    environment: {HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1"}
+    volumes:
+      - {type: bind, source: "${TEST_ROOT}/ml-cache", target: /cache, bind: {create_host_path: false}}
+    mem_limit: 6g
+    cpus: 4
+    networks: [testnet]
+  server:
+    image: ${TEST_SERVER_IMAGE:?}
+    pull_policy: never
+    container_name: immich-apptest-${CASE_ID}-server
+    restart: "no"
+    env_file:
+      - ${R_FIXTURE:?}/immich/.env            # DB_HOSTNAME, DB_USERNAME, DB_PASSWORD (special characters), DB_DATABASE_NAME
+    environment:
+      TZ: Europe/Zagreb
+      REDIS_HOSTNAME: redis
+      IMMICH_CONFIG_FILE: /config/immich-test.config.json
+      IMMICH_WORKERS_INCLUDE: api,microservices
+    labels:
+      traefik.enable: "true"                  # emulates the production label; the dark override sets it to "false"
+    volumes:
+      - {type: bind, source: "${TEST_ROOT}/media", target: /data, bind: {create_host_path: false}}
+      - {type: bind, source: "${R_CONFIG:?}", target: /config/immich-test.config.json, read_only: true}
+    mem_limit: 6g
+    cpus: 4
+    networks: [testnet]
+  client:
+    image: ${TEST_CLIENT_IMAGE:?}
+    pull_policy: never
+    profiles: ["client"]
+    working_dir: /tests
+    environment: {IMMICH_BASE_URL: "http://server:2283"}
+    volumes:
+      - {type: bind, source: ./client, target: /tests, read_only: true}
+      - {type: bind, source: "${TEST_ROOT}/synthetic", target: /synthetic, read_only: true, bind: {create_host_path: false}}
+    mem_limit: 512m
+    networks: [testnet]
+networks:
+  testnet:
+    internal: true

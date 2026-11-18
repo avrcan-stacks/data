@@ -1,0 +1,133 @@
+# Standalone project. Never combine this file with docker-compose.yml.
+# Phase 1 prepares configuration only; build/up require separate approval.
+name: data-postgres-next
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: postgres-standard-local:16.16-bookworm-vector0.8.2-cron1.6.7
+    platform: linux/amd64
+    container_name: postgres
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      # Reuse the existing administrator credentials; no application DB creation.
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=en_US.utf8
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_cron,pg_stat_statements
+      - -c
+      # Bootstrap DB only. Before a future approved qubit_user restore,
+      # change this to qubit_user and restart only this new instance.
+      - cron.database_name=postgres
+      - -c
+      - cron.timezone=GMT
+      - -c
+      - cron.launch_active_jobs=off
+      - -c
+      - shared_buffers=3GB
+      - -c
+      - max_connections=100
+      - -c
+      - work_mem=4MB
+      - -c
+      - TimeZone=Europe/Zagreb
+    mem_limit: 12g
+    shm_size: 1g
+    volumes:
+      - type: bind
+        source: /opt/stacks/data/postgres-standard/data
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/stacks/data/backups
+        target: /backups
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/qubit/backups
+        target: /srv/qubit/backups
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - postgis
+      - backend
+      - hetzner_net
+
+  immich-db:
+    build:
+      context: .
+      dockerfile: Dockerfile.immich-db
+    image: immich-db-local:16.16-bookworm-vector0.8.2-vchord1.1.1
+    platform: linux/amd64
+    container_name: immich-db
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=en_US.utf8
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=vchord
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - max_connections=100
+      - -c
+      - work_mem=4MB
+      - -c
+      - TimeZone=Europe/Zagreb
+    mem_limit: 4g
+    shm_size: 1g
+    volumes:
+      - type: bind
+        source: /opt/stacks/data/immich-postgres/data
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/stacks/data/backups
+        target: /backups
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - postgis
+
+networks:
+  postgis:
+    external: true
+    name: postgis
+  backend:
+    external: true
+    name: backend
+  hetzner_net:
+    external: true
+    name: hetzner_net

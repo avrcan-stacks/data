@@ -1,0 +1,5 @@
+# Evidence and temporary secrets of an actual cutover are never committed.
+evidence/
+cutover.env
+*.key
+__pycache__/

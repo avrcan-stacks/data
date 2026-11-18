@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+# Extract only PG16 VectorChord artifacts; do not inherit its PostgreSQL version.
+FROM ghcr.io/tensorchord/vchord-postgres:pg16-v1.1.1@sha256:5abd2ad6fa35befa780fbfbea26e649be96a53c7992e0a7f1b90c83330773206 AS vchord_ext
+
+FROM postgres:16.16-bookworm@sha256:f45d631d050c2fe068f384ed6c4faac506e9cd7f4da605ce703648e4b0985848 AS extension_builder
+
+# Build against the same PG minor and libpq ABI as the final image.
+RUN set -eux; \
+    test "$PG_MAJOR" = "16"; \
+    postgres --version | grep -E ' 16[.]16([[:space:]]|$)'; \
+    libpq_version="$(dpkg-query -W -f='${Version}' libpq5)"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl \
+      "postgresql-server-dev-16=$PG_VERSION" \
+      "libpq-dev=$libpq_version"; \
+    pg_config --version | grep -E ' 16[.]16([[:space:]]|$)'; \
+    rm -rf /var/lib/apt/lists/*
+
+# Fixed upstream source release; fail rather than substitute a newer version.
+RUN set -eux; \
+    curl --fail --location --retry 3 \
+      https://codeload.github.com/pgvector/pgvector/tar.gz/refs/tags/v0.8.2 \
+      -o /tmp/vector.tar.gz; \
+    echo "69f4019389af05dc1c9548deb8628e62878e6e207c03907f2b8af2016472cdaa  /tmp/vector.tar.gz" | sha256sum -c -; \
+    mkdir /tmp/vector; \
+    tar -xzf /tmp/vector.tar.gz --strip-components=1 -C /tmp/vector; \
+    make -C /tmp/vector -j2 OPTFLAGS="" with_llvm=no PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config; \
+    make -C /tmp/vector install DESTDIR=/out OPTFLAGS="" with_llvm=no PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config
+
+FROM postgres:16.16-bookworm@sha256:f45d631d050c2fe068f384ed6c4faac506e9cd7f4da605ce703648e4b0985848
+
+COPY --from=extension_builder /out/usr/lib/postgresql/16/lib/vector.so /usr/lib/postgresql/16/lib/vector.so
+COPY --from=extension_builder /out/usr/share/postgresql/16/extension/ /usr/share/postgresql/16/extension/
+COPY --from=vchord_ext /usr/lib/postgresql/16/lib/vchord.so /usr/lib/postgresql/16/lib/vchord.so
+COPY --from=vchord_ext /usr/share/postgresql/16/extension/vchord.control /usr/share/postgresql/16/extension/vchord.control
+COPY --from=vchord_ext /usr/share/postgresql/16/extension/vchord--*.sql /usr/share/postgresql/16/extension/
+
+RUN set -eux; \
+    postgres --version | grep -E ' 16[.]16([[:space:]]|$)'; \
+    grep -Eq "^default_version = '0[.]8[.]2'$" /usr/share/postgresql/16/extension/vector.control; \
+    grep -Eq "^default_version[[:space:]]*=[[:space:]]*'1[.]1[.]1'$" /usr/share/postgresql/16/extension/vchord.control; \
+    for ext in cube earthdistance pg_trgm unaccent uuid-ossp; do \
+      test -f "/usr/share/postgresql/16/extension/$ext.control"; \
+    done; \
+    test ! -e /usr/share/postgresql/16/extension/postgis.control; \
+    test ! -e /usr/share/postgresql/16/extension/pg_cron.control; \
+    ldd /usr/lib/postgresql/16/lib/vector.so > /tmp/vector.ldd; \
+    ! grep -q 'not found' /tmp/vector.ldd; \
+    ldd /usr/lib/postgresql/16/lib/vchord.so > /tmp/vchord.ldd; \
+    ! grep -q 'not found' /tmp/vchord.ldd; \
+    rm /tmp/vector.ldd /tmp/vchord.ldd
+
+LABEL org.opencontainers.image.title="Immich PostgreSQL 16.16 with pgvector 0.8.2 and VectorChord 1.1.1"

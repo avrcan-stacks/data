@@ -1,0 +1,7 @@
+# Rehearsal copy of ../docker-compose.frozen.yml
+services:
+  server:
+    environment:
+      IMMICH_WORKERS_INCLUDE: api
+    labels:
+      traefik.enable: "false"

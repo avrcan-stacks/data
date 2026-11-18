@@ -4,6 +4,8 @@ postgis-tailscale.env
 
 # Runtime volumes / state (never commit)
 postgres/
+postgres-standard/
+immich-postgres/
 backups/
 tailscale-postgis-state/
 

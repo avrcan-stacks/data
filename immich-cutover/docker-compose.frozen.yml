@@ -1,0 +1,9 @@
+# "Frozen read" override for /opt/stacks/immich/docker-compose.yml (phase 7B). Used ONLY inside s_freeze, after every writer is stopped and before the source is fenced.
+# Starts immich-server against the SOURCE database (DB_HOSTNAME is NOT overridden: .env still says postgis) without a Traefik route and without job workers,
+# so the API baseline is taken from a frozen state that nobody can write to.
+services:
+  immich-server:
+    environment:
+      IMMICH_WORKERS_INCLUDE: api         # no job workers (they would resume metadataExtraction and process held jobs)
+    labels:
+      traefik.enable: "false"             # no public route

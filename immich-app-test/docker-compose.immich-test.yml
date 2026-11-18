@@ -1,0 +1,157 @@
+# Immich v3.3.5 application test — ISOLATED. Plan only: NOT executed in phase 5.
+#
+# Standalone project. NEVER combine with docker-compose.yml, docker-compose.local.yml,
+# docker-compose.postgres-new.yml or /opt/stacks/immich/docker-compose.yml.
+# Always start with an explicit project name and env file:
+#   docker compose -p immich-apptest-$CASE_ID --env-file .env.test -f docker-compose.immich-test.yml ...
+#
+# Isolation rules encoded here:
+#  * the only network is `testnet` with internal: true (no gateway, no outbound, no host ports);
+#  * no external networks, no `ports:`, no container_name (names are project-prefixed, cannot collide);
+#  * no env_file: the production /opt/stacks/immich/.env (API key, OIDC secret, webhook secret,
+#    Nextcloud bridge settings) is never read;
+#  * no docker.sock, no Nextcloud data mount, no production library/backups mount;
+#  * every ${VAR:?} is mandatory so a missing value fails before anything starts.
+# Hardening (no-new-privileges, pids/mem/cpu limits) is untested on these images; review at first start.
+
+services:
+  db:
+    image: ${TEST_DB_IMAGE:?}            # immich-db image ID from phase 2/4C (PG 16.16, vector 0.8.2, vchord 1.1.1)
+    pull_policy: never
+    restart: "no"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${TEST_DB_ADMIN_PASSWORD:?}
+      POSTGRES_DB: postgres
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=en_US.utf8
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=vchord
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=40
+      - -c
+      - TimeZone=Europe/Zagreb
+    volumes:
+      - type: bind
+        source: ${TEST_ROOT:?}/db-data
+        target: /var/lib/postgresql/data
+        bind: {create_host_path: false}
+      - type: bind                        # sanitized no-PostGIS archive from phase 4B, read-only
+        source: ${SANITIZED_DUMP:?}
+        target: /sanitized.dump
+        read_only: true
+        bind: {create_host_path: false}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    mem_limit: 4g
+    cpus: 2
+    shm_size: 1g
+    pids_limit: 512
+    security_opt: ["no-new-privileges:true"]
+    networks: [testnet]
+
+  redis:
+    image: ${TEST_REDIS_IMAGE:?}         # same valkey digest as production, separate instance, no persistence
+    pull_policy: never
+    restart: "no"
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    tmpfs: ["/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
+    networks: [testnet]
+
+  ml:
+    image: ${TEST_ML_IMAGE:?}            # ghcr.io/immich-app/immich-machine-learning:v3.3.5 (CPU) by ID
+    pull_policy: never
+    restart: "no"
+    environment:
+      HF_HUB_OFFLINE: "1"                # models must come from the copied cache; no download attempt
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - type: bind                        # COPY of production model cache (never the production volume)
+        source: ${TEST_ROOT:?}/ml-cache
+        target: /cache
+        bind: {create_host_path: false}
+    mem_limit: 6g
+    cpus: 4
+    pids_limit: 512
+    security_opt: ["no-new-privileges:true"]
+    networks: [testnet]
+
+  server:
+    image: ${TEST_SERVER_IMAGE:?}        # production-built patched image by ID (no rebuild, no latest tag)
+    pull_policy: never
+    restart: "no"
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      ml: {condition: service_started}
+    environment:
+      TZ: Europe/Zagreb
+      DB_HOSTNAME: db
+      DB_PORT: "5432"
+      DB_USERNAME: immich
+      DB_PASSWORD: ${TEST_DB_APP_PASSWORD:?}
+      DB_DATABASE_NAME: immich
+      DB_SKIP_MIGRATIONS: ${TEST_DB_SKIP_MIGRATIONS:-false}
+      REDIS_HOSTNAME: redis
+      IMMICH_CONFIG_FILE: /config/immich-test.config.json
+      IMMICH_WORKERS_INCLUDE: ${TEST_WORKERS:-api}   # stage A: api only; microservices only in the separately approved stage
+      IMMICH_LOG_LEVEL: ${TEST_LOG_LEVEL:-log}
+      # Deliberately NOT set: IMMICH_EVENT_WEBHOOK_URL, IMMICH_EVENT_WEBHOOK_SECRET, MEDIA_OPS_*,
+      # IMMICH_API_KEY, OIDC_*, BRIDGE_*. The patched build only emits webhooks when both webhook vars exist.
+    volumes:
+      - type: bind                        # empty skeleton media dir created for the test; never production /data
+        source: ${TEST_ROOT:?}/media
+        target: /data
+        bind: {create_host_path: false}
+      - type: bind
+        source: ./immich-test.config.json
+        target: /config/immich-test.config.json
+        read_only: true
+    mem_limit: 4g
+    cpus: 2
+    pids_limit: 1024
+    security_opt: ["no-new-privileges:true"]
+    networks: [testnet]
+
+  client:                                # test driver on the same internal network; no host port is needed
+    image: ${TEST_CLIENT_IMAGE:?}        # python:3.12-slim by local image ID; stdlib only, no pip
+    pull_policy: never
+    profiles: ["client"]
+    restart: "no"
+    working_dir: /tests
+    environment:
+      IMMICH_BASE_URL: http://server:2283
+      TEST_ADMIN_EMAIL: ${TEST_ADMIN_EMAIL:-}
+      TEST_ADMIN_PASSWORD: ${TEST_ADMIN_PASSWORD:-}
+    volumes:
+      - type: bind
+        source: ./client
+        target: /tests
+        read_only: true
+      - type: bind
+        source: ${TEST_ROOT:?}/results
+        target: /results
+        bind: {create_host_path: false}
+    mem_limit: 256m
+    pids_limit: 64
+    security_opt: ["no-new-privileges:true"]
+    networks: [testnet]
+
+networks:
+  testnet:
+    internal: true                       # no external connectivity; do NOT add other networks to any service

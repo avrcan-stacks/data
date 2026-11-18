@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1
+# linux/amd64 manifest pinned on 2026-11-14. No existing image is retagged.
+FROM postgres:16.16-bookworm@sha256:f45d631d050c2fe068f384ed6c4faac506e9cd7f4da605ce703648e4b0985848 AS extension_builder
+
+# Build against the same PG minor and libpq ABI as the final image.
+RUN set -eux; \
+    test "$PG_MAJOR" = "16"; \
+    postgres --version | grep -E ' 16[.]16([[:space:]]|$)'; \
+    libpq_version="$(dpkg-query -W -f='${Version}' libpq5)"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl \
+      "postgresql-server-dev-16=$PG_VERSION" \
+      "libpq-dev=$libpq_version"; \
+    pg_config --version | grep -E ' 16[.]16([[:space:]]|$)'; \
+    rm -rf /var/lib/apt/lists/*
+
+# Fixed upstream source release; fail rather than substitute a newer version.
+RUN set -eux; \
+    curl --fail --location --retry 3 \
+      https://codeload.github.com/pgvector/pgvector/tar.gz/refs/tags/v0.8.2 \
+      -o /tmp/vector.tar.gz; \
+    echo "69f4019389af05dc1c9548deb8628e62878e6e207c03907f2b8af2016472cdaa  /tmp/vector.tar.gz" | sha256sum -c -; \
+    mkdir /tmp/vector; \
+    tar -xzf /tmp/vector.tar.gz --strip-components=1 -C /tmp/vector; \
+    make -C /tmp/vector -j2 OPTFLAGS="" with_llvm=no PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config; \
+    make -C /tmp/vector install DESTDIR=/out OPTFLAGS="" with_llvm=no PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config
+
+# pg_cron upstream v1.6.7 exposes SQL extension version 1.6.
+RUN set -eux; \
+    curl --fail --location --retry 3 \
+      https://codeload.github.com/citusdata/pg_cron/tar.gz/refs/tags/v1.6.7 \
+      -o /tmp/cron.tar.gz; \
+    echo "d950bc29155f31017567e23a31d268ff672e98276c0e9d062512fb7870351f03  /tmp/cron.tar.gz" | sha256sum -c -; \
+    mkdir /tmp/cron; \
+    tar -xzf /tmp/cron.tar.gz --strip-components=1 -C /tmp/cron; \
+    make -C /tmp/cron -j2 with_llvm=no PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config; \
+    make -C /tmp/cron install DESTDIR=/out with_llvm=no PG_CONFIG=/usr/lib/postgresql/16/bin/pg_config
+
+FROM postgres:16.16-bookworm@sha256:f45d631d050c2fe068f384ed6c4faac506e9cd7f4da605ce703648e4b0985848
+
+COPY --from=extension_builder /out/usr/lib/postgresql/16/lib/vector.so /usr/lib/postgresql/16/lib/vector.so
+COPY --from=extension_builder /out/usr/lib/postgresql/16/lib/pg_cron.so /usr/lib/postgresql/16/lib/pg_cron.so
+COPY --from=extension_builder /out/usr/share/postgresql/16/extension/ /usr/share/postgresql/16/extension/
+
+RUN set -eux; \
+    postgres --version | grep -E ' 16[.]16([[:space:]]|$)'; \
+    grep -Eq "^default_version = '0[.]8[.]2'$" /usr/share/postgresql/16/extension/vector.control; \
+    grep -Eq "^default_version = '1[.]6'$" /usr/share/postgresql/16/extension/pg_cron.control; \
+    for ext in pg_stat_statements pgcrypto pg_trgm uuid-ossp pageinspect fuzzystrmatch; do \
+      test -f "/usr/share/postgresql/16/extension/$ext.control"; \
+    done; \
+    test ! -e /usr/share/postgresql/16/extension/postgis.control; \
+    test ! -e /usr/share/postgresql/16/extension/vchord.control; \
+    ldd /usr/lib/postgresql/16/lib/vector.so > /tmp/vector.ldd; \
+    ! grep -q 'not found' /tmp/vector.ldd; \
+    ldd /usr/lib/postgresql/16/lib/pg_cron.so > /tmp/cron.ldd; \
+    ! grep -q 'not found' /tmp/cron.ldd; \
+    rm /tmp/vector.ldd /tmp/cron.ldd
+
+LABEL org.opencontainers.image.title="Standard PostgreSQL 16.16 with pgvector 0.8.2 and pg_cron 1.6.7"

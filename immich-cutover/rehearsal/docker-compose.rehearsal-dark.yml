@@ -1,0 +1,8 @@
+# Rehearsal copy of ../docker-compose.dark.yml (same two keys, test container name).
+services:
+  server:
+    environment:
+      IMMICH_WORKERS_INCLUDE: api         # NO job workers in the dark phase: MetadataService unconditionally RESUMES the metadataExtraction queue at every microservices start (found by the rehearsal)
+      DB_HOSTNAME: immich-apptest-${CASE_ID}-immichdb
+    labels:
+      traefik.enable: "false"

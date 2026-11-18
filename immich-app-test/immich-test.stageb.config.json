@@ -1,0 +1,104 @@
+{
+  "backup": {
+    "database": {
+      "enabled": false
+    }
+  },
+  "integrityChecks": {
+    "missingFiles": {
+      "enabled": false
+    },
+    "untrackedFiles": {
+      "enabled": false
+    },
+    "checksumFiles": {
+      "enabled": false
+    }
+  },
+  "job": {
+    "thumbnailGeneration": {
+      "concurrency": 2
+    },
+    "metadataExtraction": {
+      "concurrency": 2
+    },
+    "faceDetection": {
+      "concurrency": 2
+    },
+    "smartSearch": {
+      "concurrency": 2
+    },
+    "ocr": {
+      "concurrency": 1
+    },
+    "videoConversion": {
+      "concurrency": 1
+    }
+  },
+  "logging": {
+    "enabled": true,
+    "level": "log"
+  },
+  "machineLearning": {
+    "enabled": true,
+    "urls": [
+      "http://ml:3003"
+    ],
+    "availabilityChecks": {
+      "enabled": true,
+      "timeout": 5000,
+      "interval": 30000
+    },
+    "facialRecognition": {
+      "minFaces": 2
+    }
+  },
+  "map": {
+    "enabled": false
+  },
+  "oauth": {
+    "enabled": false,
+    "autoLaunch": false
+  },
+  "passwordLogin": {
+    "enabled": true
+  },
+  "newVersionCheck": {
+    "enabled": false
+  },
+  "nightlyTasks": {
+    "startTime": "03:30",
+    "databaseCleanup": false,
+    "generateMemories": false,
+    "syncQuotaUsage": false,
+    "missingThumbnails": false,
+    "clusterNewFaces": false
+  },
+  "library": {
+    "scan": {
+      "enabled": false
+    },
+    "watch": {
+      "enabled": false
+    }
+  },
+  "notifications": {
+    "smtp": {
+      "enabled": false
+    }
+  },
+  "server": {
+    "externalDomain": "",
+    "publicUsers": true
+  },
+  "storageTemplate": {
+    "enabled": false
+  },
+  "trash": {
+    "enabled": true,
+    "days": 30
+  },
+  "reverseGeocoding": {
+    "enabled": true
+  }
+}

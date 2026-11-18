@@ -1,0 +1,4 @@
+# Generated per test case; contains throw-away test credentials and paths.
+.env.test
+runtime/
+results/

@@ -1,0 +1,23 @@
+# Stage B overlay (api + microservices workers, synthetic media). Use ONLY together with docker-compose.immich-test.yml:
+#   docker compose -p immich-apptest-$CASE_ID --env-file .env.test -f docker-compose.immich-test.yml -f docker-compose.immich-test.stageb.yml ...
+# Needs TEST_WORKERS=api,microservices in .env.test (set by the Stage B runner) and ${TEST_ROOT}/synthetic.
+# Adds no network, no port, no production mount. Isolation rules of the base file stay in force.
+services:
+  server:
+    mem_limit: 6g
+    cpus: 4
+    volumes:
+      - type: bind                        # Stage B config: same isolation switches as Stage A (library scan/watch, backup,
+        source: ./immich-test.stageb.config.json   # integrity checks, version check, nightly tasks, OAuth, SMTP all off)
+        target: /config/immich-test.config.json
+        read_only: true
+  client:
+    mem_limit: 512m
+    environment:
+      TEST_USER_PASSWORD: ${TEST_USER_PASSWORD:-}
+    volumes:
+      - type: bind                        # generated synthetic images, read-only
+        source: ${TEST_ROOT:?}/synthetic
+        target: /synthetic
+        read_only: true
+        bind: {create_host_path: false}

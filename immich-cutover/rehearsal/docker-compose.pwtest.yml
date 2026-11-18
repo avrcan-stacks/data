@@ -1,0 +1,10 @@
+# Loader test: an env_file with a tricky DB_PASSWORD is parsed by Compose exactly like in production; the container is only CREATED (never started, no network).
+services:
+  p:
+    image: ${R_NEW_IMAGE:?}
+    pull_policy: never
+    container_name: immich-apptest-${CASE_ID:?}-pwenv
+    entrypoint: ["true"]
+    network_mode: none
+    env_file:
+      - ${PW_ENVFILE:?}

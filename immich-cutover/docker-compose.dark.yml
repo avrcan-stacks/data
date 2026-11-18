@@ -1,0 +1,11 @@
+# "Dark launch" override for /opt/stacks/immich/docker-compose.yml. NOT applied in phase 6.
+# Starts immich-server against the NEW database without a Traefik route, so it can be validated (API through docker exec) before any user can reach it.
+# The production compose file and .env are NOT edited by using this file; it is removed (and .env updated) only at the approved "open traffic" step.
+#   docker compose -p immich --project-directory /opt/stacks/immich -f /opt/stacks/immich/docker-compose.yml -f /opt/stacks/data/immich-cutover/docker-compose.dark.yml up -d --no-deps --no-build --pull never immich-server
+services:
+  immich-server:
+    environment:
+      IMMICH_WORKERS_INCLUDE: api         # NO job workers in the dark phase: MetadataService unconditionally RESUMES the metadataExtraction queue at every microservices start (found by the rehearsal)
+      DB_HOSTNAME: immich-db          # takes precedence over env_file (.env still says postgis)
+    labels:
+      traefik.enable: "false"         # no public route while in dark mode
